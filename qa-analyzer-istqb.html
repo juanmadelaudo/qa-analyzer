@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>QA Analyzer ISTQB</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    body { margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+
+// localStorage-based storage polyfill (mirrors window.storage API shape)
+window.storage = {
+  get: async (key) => {
+    try {
+      const val = localStorage.getItem('qa:' + key);
+      if (val === null) throw new Error('not found');
+      return { key, value: val };
+    } catch { throw new Error('not found'); }
+  },
+  set: async (key, value) => {
+    localStorage.setItem('qa:' + key, value);
+    return { key, value };
+  },
+  delete: async (key) => {
+    localStorage.removeItem('qa:' + key);
+    return { key, deleted: true };
+  },
+  list: async (prefix) => {
+    const keys = Object.keys(localStorage)
+      .filter(k => k.startsWith('qa:' + (prefix||'')))
+      .map(k => k.slice(3));
+    return { keys };
+  }
+};
+
+  </script>
+
+  <script type="text/babel" data-presets="react">
+const { useState, useRef, useCallback, useEffect } = React;
+
+
+
+const ACCENT  = "#00f5c4";
+const ACCENT2 = "#7c3aed";
+const AMBER   = "#f59e0b";
+const BG      = "#080c14";
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const styles = `
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:${BG};font-family:'Syne',sans-serif;color:#e2e8f0;}
+  .app{min-height:100vh;background:${BG};position:relative;overflow-x:hidden;}
+  .grid-bg{position:fixed;inset:0;pointer-events:none;z-index:0;
+    background-image:linear-gradient(rgba(0,245,196,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,245,196,.03) 1px,transparent 1px);background-size:40px 40px;}
+  .orb{position:fixed;border-radius:50%;pointer-events:none;z-index:0;filter:blur(80px);opacity:.15;}
+  .orb1{width:500px;height:500px;background:${ACCENT2};top:-200px;right:-100px;}
+  .orb2{width:400px;height:400px;background:${ACCENT};bottom:-150px;left:-100px;}
+  .container{max-width:960px;margin:0 auto;padding:40px 24px;position:relative;z-index:1;}
+
+  /* Header */
+  .header{text-align:center;margin-bottom:40px;}
+  .badge{display:inline-flex;align-items:center;gap:8px;
+    background:rgba(0,245,196,.08);border:1px solid rgba(0,245,196,.2);
+    border-radius:20px;padding:6px 16px;margin-bottom:18px;
+    font-family:'Space Mono',monospace;font-size:11px;color:${ACCENT};
+    letter-spacing:2px;text-transform:uppercase;}
+  .badge-dot{width:6px;height:6px;background:${ACCENT};border-radius:50%;animation:pulse 2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+  h1{font-size:clamp(1.8rem,5vw,2.8rem);font-weight:800;line-height:1.1;letter-spacing:-1px;}
+  h1 span{color:${ACCENT};}
+  .subtitle{color:#64748b;margin-top:10px;font-size:.93rem;line-height:1.6;}
+
+  /* Nav tabs */
+  .nav-tabs{display:flex;gap:8px;margin-bottom:32px;background:rgba(255,255,255,.02);
+    border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:6px;}
+  .nav-tab{flex:1;padding:10px 16px;border-radius:10px;border:none;
+    background:transparent;color:#64748b;font-family:'Syne',sans-serif;
+    font-weight:600;font-size:.88rem;cursor:pointer;transition:all .2s;text-align:center;}
+  .nav-tab.active{background:rgba(0,245,196,.1);color:${ACCENT};border:1px solid rgba(0,245,196,.2);}
+  .nav-tab:hover:not(.active){background:rgba(255,255,255,.04);color:#e2e8f0;}
+  .nav-tab.active.amber{background:rgba(245,158,11,.1);color:${AMBER};border-color:rgba(245,158,11,.25);}
+
+  /* Mode selector */
+  .mode-selector{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px;}
+  @media(max-width:580px){.mode-selector{grid-template-columns:1fr;}}
+  .mode-card{border-radius:18px;padding:24px 22px;cursor:pointer;
+    border:2px solid rgba(255,255,255,.07);background:rgba(255,255,255,.02);
+    transition:all .25s ease;position:relative;overflow:hidden;text-align:left;}
+  .mode-card:hover{transform:translateY(-3px);}
+  .mode-card.mode-panaya{border-color:rgba(245,158,11,.2);background:rgba(245,158,11,.03);}
+  .mode-card.mode-panaya:hover{border-color:rgba(245,158,11,.45);box-shadow:0 8px 32px rgba(245,158,11,.12);}
+  .mode-card.mode-panaya.selected{border-color:${AMBER};box-shadow:0 0 0 3px rgba(245,158,11,.15);}
+  .mode-card.mode-tc{border-color:rgba(0,245,196,.2);background:rgba(0,245,196,.02);}
+  .mode-card.mode-tc:hover{border-color:rgba(0,245,196,.45);box-shadow:0 8px 32px rgba(0,245,196,.1);}
+  .mode-card.mode-tc.selected{border-color:${ACCENT};box-shadow:0 0 0 3px rgba(0,245,196,.12);}
+  .mode-check{position:absolute;top:16px;right:16px;width:22px;height:22px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;font-size:12px;transition:all .2s;}
+  .mode-card.mode-panaya .mode-check{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);color:${AMBER};}
+  .mode-card.mode-panaya.selected .mode-check{background:${AMBER};border-color:${AMBER};color:#080c14;}
+  .mode-card.mode-tc .mode-check{background:rgba(0,245,196,.08);border:1px solid rgba(0,245,196,.2);color:${ACCENT};}
+  .mode-card.mode-tc.selected .mode-check{background:${ACCENT};border-color:${ACCENT};color:#080c14;}
+  .mode-icon{font-size:32px;margin-bottom:14px;display:block;}
+  .mode-title{font-size:1.05rem;font-weight:800;margin-bottom:6px;}
+  .mode-card.mode-panaya .mode-title{color:${AMBER};}
+  .mode-card.mode-tc .mode-title{color:${ACCENT};}
+  .mode-desc{font-size:.83rem;color:#64748b;line-height:1.55;}
+  .mode-tag{display:inline-block;margin-top:12px;font-size:.68rem;font-family:'Space Mono',monospace;
+    letter-spacing:1px;padding:3px 10px;border-radius:6px;}
+  .mode-card.mode-panaya .mode-tag{background:rgba(245,158,11,.1);color:${AMBER};border:1px solid rgba(245,158,11,.2);}
+  .mode-card.mode-tc .mode-tag{background:rgba(0,245,196,.07);color:${ACCENT};border:1px solid rgba(0,245,196,.18);}
+
+  /* Upload */
+  .upload-zone{border:2px dashed rgba(0,245,196,.22);border-radius:20px;
+    padding:40px 32px;text-align:center;cursor:pointer;
+    transition:all .3s ease;background:rgba(0,245,196,.02);}
+  .upload-zone:hover,.upload-zone.drag-over{border-color:${ACCENT};
+    background:rgba(0,245,196,.05);transform:translateY(-2px);box-shadow:0 0 36px rgba(0,245,196,.08);}
+  .upload-icon{font-size:44px;margin-bottom:14px;display:block;}
+  .upload-title{font-size:1.1rem;font-weight:700;margin-bottom:6px;}
+  .upload-sub{color:#475569;font-size:.85rem;}
+  .type-pills{display:flex;gap:8px;justify-content:center;margin-top:18px;flex-wrap:wrap;}
+  .pill{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+    border-radius:20px;padding:3px 12px;font-size:.75rem;font-family:'Space Mono',monospace;color:#64748b;}
+  .file-preview{background:rgba(0,245,196,.03);border:1px solid rgba(0,245,196,.14);
+    border-radius:14px;padding:18px 22px;margin-top:14px;display:flex;align-items:center;gap:14px;}
+  .file-icon-lg{font-size:30px;}
+  .file-info{flex:1;}
+  .file-name{font-weight:700;font-size:.93rem;}
+  .file-meta{color:#475569;font-size:.78rem;font-family:'Space Mono',monospace;margin-top:2px;}
+  .btn-remove{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);
+    color:#ef4444;border-radius:8px;padding:5px 11px;cursor:pointer;font-size:.78rem;transition:all .2s;}
+  .btn-remove:hover{background:rgba(239,68,68,.2);}
+
+  /* Analyze button */
+  .analyze-btn{width:100%;margin-top:22px;border:none;border-radius:14px;
+    padding:17px 32px;font-size:1rem;font-weight:800;
+    font-family:'Syne',sans-serif;cursor:pointer;letter-spacing:.5px;transition:all .3s ease;}
+  .analyze-btn.btn-panaya{background:linear-gradient(135deg,${AMBER},#ef4444);color:#fff;}
+  .analyze-btn.btn-panaya:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 30px rgba(245,158,11,.35);}
+  .analyze-btn.btn-tc{background:linear-gradient(135deg,${ACCENT},#00c9a0);color:#080c14;}
+  .analyze-btn.btn-tc:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,245,196,.32);}
+  .analyze-btn:disabled{opacity:.45;cursor:not-allowed;transform:none !important;}
+
+  /* Loading */
+  .loading-state{text-align:center;padding:48px 0;}
+  .spinner{width:54px;height:54px;margin:0 auto 20px;border-radius:50%;position:relative;}
+  .spinner::before{content:'';position:absolute;inset:0;border-radius:50%;
+    border:3px solid transparent;border-top-color:${ACCENT};border-right-color:${ACCENT2};
+    animation:spin 1s linear infinite;}
+  .spinner.spin-amber::before{border-top-color:${AMBER};border-right-color:#ef4444;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-step{color:${ACCENT};font-size:.97rem;font-weight:700;margin-bottom:8px;}
+  .loading-step.amber{color:${AMBER};}
+  .loading-text{color:#64748b;font-family:'Space Mono',monospace;font-size:.8rem;}
+  .progress-wrap{width:100%;max-width:340px;margin:18px auto 0;
+    height:4px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden;}
+  .progress-bar{height:100%;border-radius:4px;transition:width .4s ease;
+    background:linear-gradient(90deg,${ACCENT2},${ACCENT});}
+  .progress-bar.amber{background:linear-gradient(90deg,#ef4444,${AMBER});}
+
+  /* Results */
+  .results{margin-top:36px;animation:fadeUp .5s ease;}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+  .section-label{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:3px;
+    text-transform:uppercase;color:${ACCENT};margin-bottom:14px;
+    display:flex;align-items:center;gap:8px;}
+  .section-label.amber{color:${AMBER};}
+  .section-label::after{content:'';flex:1;height:1px;background:rgba(0,245,196,.12);}
+  .section-label.amber::after{background:rgba(245,158,11,.15);}
+  .analysis-card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);
+    border-radius:16px;padding:22px;margin-bottom:14px;}
+  .analysis-card h2{font-size:1rem;font-weight:700;margin-bottom:12px;}
+  .analysis-text{color:#94a3b8;line-height:1.75;font-size:.9rem;}
+  .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px;}
+  @media(max-width:580px){.meta-grid{grid-template-columns:1fr;}}
+  .meta-item{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:10px;padding:11px 14px;}
+  .meta-label{font-size:.67rem;font-family:'Space Mono',monospace;letter-spacing:2px;text-transform:uppercase;color:#475569;margin-bottom:5px;}
+  .meta-value{font-size:.84rem;color:#cbd5e1;font-weight:600;}
+  .tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;}
+  .tag{background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.22);color:#a78bfa;border-radius:7px;padding:3px 10px;font-size:.73rem;font-family:'Space Mono',monospace;}
+  .tag-risk{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.18);color:#fca5a5;}
+  .tag-type{background:rgba(0,245,196,.07);border:1px solid rgba(0,245,196,.16);color:${ACCENT};}
+
+  /* Test Case cards */
+  .cases-grid{display:flex;flex-direction:column;gap:13px;}
+  .case-card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:14px;overflow:hidden;transition:all .25s ease;cursor:pointer;}
+  .case-card:hover{border-color:rgba(0,245,196,.2);transform:translateX(4px);}
+  .case-card.expanded{border-color:rgba(0,245,196,.28);}
+  .case-header{display:flex;align-items:center;gap:12px;padding:15px 20px;}
+  .case-num{width:34px;height:34px;border-radius:10px;flex-shrink:0;background:rgba(0,245,196,.07);border:1px solid rgba(0,245,196,.14);display:flex;align-items:center;justify-content:center;font-family:'Space Mono',monospace;font-size:10px;color:${ACCENT};font-weight:700;}
+  .case-title{font-weight:700;font-size:.9rem;flex:1;line-height:1.35;}
+  .case-badges{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;}
+  .case-priority{font-size:.67rem;font-family:'Space Mono',monospace;padding:3px 9px;border-radius:6px;}
+  .priority-high{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.2);}
+  .priority-medium{background:rgba(251,146,60,.12);color:#fb923c;border:1px solid rgba(251,146,60,.2);}
+  .priority-low{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.2);}
+  .case-type-badge{font-size:.65rem;font-family:'Space Mono',monospace;padding:3px 9px;border-radius:6px;background:rgba(0,245,196,.07);color:${ACCENT};border:1px solid rgba(0,245,196,.14);}
+  .case-chevron{color:#475569;transition:transform .25s;font-size:.8rem;flex-shrink:0;}
+  .case-card.expanded .case-chevron,.pcard.expanded .pcard-chevron{transform:rotate(90deg);}
+  .case-body,.pcard-body{padding:0 20px 18px;display:none;}
+  .case-card.expanded .case-body,.pcard.expanded .pcard-body{display:block;}
+  .case-meta-row{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;padding-top:4px;}
+  .cmr-item{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:7px;padding:5px 11px;font-size:.73rem;font-family:'Space Mono',monospace;color:#64748b;}
+  .cmr-item strong{color:#94a3b8;margin-right:4px;}
+  .cs,.pcs{margin-bottom:13px;}
+  .cs-title,.pcs-title{font-size:.67rem;font-family:'Space Mono',monospace;letter-spacing:2px;text-transform:uppercase;color:#475569;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+  .cs-title::before{content:'';width:3px;height:10px;background:${ACCENT};border-radius:2px;opacity:.45;}
+  .pcs-title::before{content:'';width:3px;height:10px;background:${AMBER};border-radius:2px;opacity:.5;}
+  .cs-content,.pcs-content{color:#94a3b8;font-size:.86rem;line-height:1.65;}
+  .steps-list{list-style:none;}
+  .steps-list li{display:flex;gap:10px;padding:5px 0;color:#94a3b8;font-size:.86rem;align-items:flex-start;border-bottom:1px solid rgba(255,255,255,.03);}
+  .steps-list li:last-child{border-bottom:none;}
+  .step-num{width:20px;height:20px;border-radius:5px;flex-shrink:0;margin-top:2px;background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.2);display:flex;align-items:center;justify-content:center;font-size:9px;font-family:'Space Mono',monospace;color:#a78bfa;}
+  .expected-block{background:rgba(34,197,94,.05);border:1px solid rgba(34,197,94,.14);border-radius:8px;padding:9px 13px;color:#4ade80;font-size:.83rem;line-height:1.6;}
+  .exit-block{background:rgba(251,146,60,.05);border:1px solid rgba(251,146,60,.14);border-radius:8px;padding:9px 13px;color:#fb923c;font-size:.83rem;line-height:1.6;margin-top:7px;}
+  .automation-block{background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:13px 15px;margin-top:6px;font-family:'Space Mono',monospace;font-size:.71rem;color:#94a3b8;line-height:1.75;white-space:pre-wrap;overflow-x:auto;}
+
+  /* Panaya cards */
+  .pcard{background:rgba(245,158,11,.02);border:1px solid rgba(245,158,11,.12);border-radius:16px;overflow:hidden;transition:all .25s ease;cursor:pointer;}
+  .pcard:hover{border-color:rgba(245,158,11,.3);transform:translateX(4px);}
+  .pcard.expanded{border-color:rgba(245,158,11,.4);}
+  .pcard-header{display:flex;align-items:center;gap:12px;padding:15px 20px;}
+  .pcard-num{width:34px;height:34px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,rgba(245,158,11,.15),rgba(239,68,68,.08));border:1px solid rgba(245,158,11,.25);display:flex;align-items:center;justify-content:center;font-family:'Space Mono',monospace;font-size:10px;color:${AMBER};font-weight:700;}
+  .pcard-title{font-weight:700;font-size:.9rem;flex:1;line-height:1.35;color:#fde68a;}
+  .pcard-chevron{color:#78716c;transition:transform .25s;font-size:.8rem;flex-shrink:0;}
+  .p-meta-row{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;padding-top:4px;}
+  .p-meta{background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.14);border-radius:7px;padding:5px 11px;font-size:.73rem;font-family:'Space Mono',monospace;color:#d97706;}
+  .p-meta strong{color:${AMBER};margin-right:4px;}
+  .panaya-steps{display:flex;flex-direction:column;}
+  .panaya-step{display:flex;gap:14px;padding:10px 0;border-bottom:1px solid rgba(245,158,11,.06);align-items:flex-start;}
+  .panaya-step:last-child{border-bottom:none;}
+  .panaya-step-num{width:26px;height:26px;border-radius:8px;flex-shrink:0;background:linear-gradient(135deg,rgba(245,158,11,.18),rgba(239,68,68,.1));border:1px solid rgba(245,158,11,.3);display:flex;align-items:center;justify-content:center;font-size:10px;font-family:'Space Mono',monospace;color:${AMBER};font-weight:700;}
+  .panaya-step-action{font-size:.85rem;color:#e2e8f0;font-weight:700;margin-bottom:3px;}
+  .panaya-step-detail{font-size:.78rem;color:#78716c;line-height:1.55;font-family:'Space Mono',monospace;}
+  .panaya-note{background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.18);border-radius:8px;padding:10px 14px;margin-top:12px;font-size:.78rem;color:#fbbf24;font-family:'Space Mono',monospace;line-height:1.6;}
+  .precond-block{background:rgba(124,58,237,.05);border:1px solid rgba(124,58,237,.14);border-radius:8px;padding:9px 13px;color:#c4b5fd;font-size:.83rem;line-height:1.6;}
+  .expected-amber{background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.15);border-radius:8px;padding:9px 13px;color:#fde68a;font-size:.83rem;}
+
+  /* Shared loading */
+  .case-loading{display:flex;align-items:center;gap:10px;padding:14px 20px;color:#475569;font-size:.8rem;font-family:'Space Mono',monospace;}
+  .spin-sm{width:17px;height:17px;border-radius:50%;flex-shrink:0;border:2px solid transparent;border-top-color:${ACCENT};border-right-color:${ACCENT2};animation:spin 1s linear infinite;}
+  .spin-sm.amber{border-top-color:${AMBER};border-right-color:#ef4444;}
+
+  /* ─── History panel ─────────────────────────────────────── */
+  .hist-empty{text-align:center;padding:60px 20px;color:#475569;}
+  .hist-empty-icon{font-size:48px;display:block;margin-bottom:16px;}
+  .hist-empty-text{font-size:.9rem;line-height:1.6;}
+  .hist-loading{text-align:center;padding:48px;color:#475569;font-family:'Space Mono',monospace;font-size:.85rem;}
+
+  .hist-filters{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center;}
+  .hist-filter-btn{padding:6px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.08);
+    background:rgba(255,255,255,.03);color:#64748b;font-family:'Space Mono',monospace;
+    font-size:.72rem;cursor:pointer;transition:all .2s;letter-spacing:.5px;}
+  .hist-filter-btn.active{background:rgba(0,245,196,.1);color:${ACCENT};border-color:rgba(0,245,196,.25);}
+  .hist-filter-btn.active.amber{background:rgba(245,158,11,.1);color:${AMBER};border-color:rgba(245,158,11,.25);}
+  .hist-search{flex:1;min-width:160px;padding:7px 14px;border-radius:8px;
+    border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);
+    color:#e2e8f0;font-family:'Space Mono',monospace;font-size:.78rem;outline:none;}
+  .hist-search:focus{border-color:rgba(0,245,196,.25);}
+  .hist-count{font-family:'Space Mono',monospace;font-size:.72rem;color:#475569;margin-left:auto;}
+
+  .hist-grid{display:flex;flex-direction:column;gap:12px;}
+  .hist-card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);
+    border-radius:14px;padding:18px 20px;cursor:pointer;transition:all .2s;}
+  .hist-card:hover{border-color:rgba(0,245,196,.2);transform:translateX(3px);}
+  .hist-card.panaya-hist{border-color:rgba(245,158,11,.1);}
+  .hist-card.panaya-hist:hover{border-color:rgba(245,158,11,.3);}
+  .hist-card-top{display:flex;align-items:flex-start;gap:12px;}
+  .hist-mode-badge{flex-shrink:0;padding:4px 10px;border-radius:6px;font-size:.65rem;
+    font-family:'Space Mono',monospace;letter-spacing:1px;margin-top:2px;}
+  .hist-mode-badge.panaya{background:rgba(245,158,11,.1);color:${AMBER};border:1px solid rgba(245,158,11,.2);}
+  .hist-mode-badge.tc{background:rgba(0,245,196,.07);color:${ACCENT};border:1px solid rgba(0,245,196,.18);}
+  .hist-card-title{font-weight:700;font-size:.92rem;flex:1;line-height:1.35;}
+  .hist-card-meta{display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;}
+  .hist-meta-item{font-size:.75rem;font-family:'Space Mono',monospace;color:#475569;display:flex;align-items:center;gap:5px;}
+  .hist-meta-item span{color:#64748b;}
+  .hist-card-summary{margin-top:10px;color:#64748b;font-size:.83rem;line-height:1.55;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .hist-tags{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;}
+  .hist-tag{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);
+    color:#64748b;border-radius:6px;padding:2px 9px;font-size:.7rem;font-family:'Space Mono',monospace;}
+  .hist-actions{display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.04);}
+  .hist-action-btn{padding:5px 12px;border-radius:7px;border:1px solid rgba(255,255,255,.07);
+    background:rgba(255,255,255,.03);color:#94a3b8;font-size:.75rem;
+    font-family:'Space Mono',monospace;cursor:pointer;transition:all .2s;}
+  .hist-action-btn:hover{background:rgba(255,255,255,.06);color:#e2e8f0;}
+  .hist-action-btn.danger:hover{background:rgba(239,68,68,.1);color:#f87171;border-color:rgba(239,68,68,.2);}
+
+  /* Shared notice */
+  .shared-notice{background:rgba(124,58,237,.06);border:1px solid rgba(124,58,237,.15);
+    border-radius:10px;padding:12px 16px;margin-bottom:20px;
+    font-size:.8rem;color:#a78bfa;font-family:'Space Mono',monospace;
+    display:flex;align-items:center;gap:8px;}
+
+  .divider{height:1px;background:rgba(255,255,255,.05);margin:30px 0;}
+  .export-bar{display:flex;gap:10px;margin-top:26px;flex-wrap:wrap;}
+  .export-btn{flex:1;min-width:130px;padding:12px 16px;border-radius:12px;
+    border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);color:#e2e8f0;
+    font-family:'Syne',sans-serif;font-weight:600;font-size:.84rem;
+    cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:7px;}
+  .export-btn:hover{background:rgba(255,255,255,.06);border-color:rgba(0,245,196,.22);}
+  .export-btn.amber-btn:hover{border-color:rgba(245,158,11,.3);}
+  .error-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);
+    border-radius:12px;padding:18px;color:#f87171;text-align:center;margin-top:22px;font-size:.88rem;}
+  input[type="file"]{display:none;}
+`;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fmt = (b) => b < 1024 ? b+" B" : b < 1048576 ? (b/1024).toFixed(1)+" KB" : (b/1048576).toFixed(1)+" MB";
+const fileIcon = (t="") => t.includes("pdf")?"📋":t.includes("word")||t.includes("document")?"📝":t.includes("video")?"🎬":t.includes("image")?"🖼️":"📄";
+const priClass = (p="") => { const l=(p||"").toLowerCase(); return l.includes("alta")||l.includes("high")?"priority-high":l.includes("baja")||l.includes("low")?"priority-low":"priority-medium"; };
+const fmtDate = (ts) => { const d=new Date(ts); return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); };
+
+async function toBase64(file) {
+  return new Promise((res,rej) => { const r=new FileReader(); r.onload=()=>res(r.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(file); });
+}
+function safeParse(raw) {
+  const c = raw.replace(/```json\n?|```/g,"").trim();
+  try { return JSON.parse(c); } catch { /**/ }
+  let s=c, inStr=false, esc=false, br=0, bk=0;
+  for (const ch of s) {
+    if(esc){esc=false;continue;} if(ch==="\\"){esc=true;continue;}
+    if(ch==='"'){inStr=!inStr;continue;} if(inStr)continue;
+    if(ch==="{")br++; else if(ch==="}")br--;
+    else if(ch==="[")bk++; else if(ch==="]")bk--;
+  }
+  const cut=s.lastIndexOf("\n"); if(cut>0)s=s.slice(0,cut).trimEnd();
+  s=s.replace(/,(\s*[}\]])/g,"$1").replace(/,\s*$/,"");
+  if(inStr)s+='"';
+  for(let i=0;i<bk;i++)s+="]"; for(let i=0;i<br;i++)s+="}";
+  try{return JSON.parse(s);}catch{return null;}
+}
+async function callClaude(system, userContent) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, system, messages:[{role:"user",content:userContent}] })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message||"Error de API");
+  return data.content.map(b=>b.text||"").join("");
+}
+
+// ─── Storage helpers (shared across all users) ────────────────────────────────
+const HISTORY_KEY = "qa-history-index";
+async function loadHistory() {
+  try {
+    const idx = await window.storage.get(HISTORY_KEY, true);
+    if (!idx) return [];
+    const ids = JSON.parse(idx.value);
+    const records = await Promise.all(
+      ids.map(async id => {
+        try {
+          const r = await window.storage.get("qa-record:" + id, true);
+          return r ? JSON.parse(r.value) : null;
+        } catch { return null; }
+      })
+    );
+    return records.filter(Boolean).sort((a,b) => b.createdAt - a.createdAt);
+  } catch { return []; }
+}
+async function saveRecord(record) {
+  try {
+    const id = "rec-" + Date.now() + "-" + Math.random().toString(36).slice(2,7);
+    record.id = id;
+    await window.storage.set("qa-record:" + id, JSON.stringify(record), true);
+    // Update index
+    let ids = [];
+    try { const idx = await window.storage.get(HISTORY_KEY, true); if(idx) ids = JSON.parse(idx.value); } catch {}
+    ids = [id, ...ids].slice(0, 50); // keep last 50
+    await window.storage.set(HISTORY_KEY, JSON.stringify(ids), true);
+    return id;
+  } catch (e) { console.error("Save failed", e); return null; }
+}
+async function deleteRecord(id) {
+  try {
+    await window.storage.delete("qa-record:" + id, true);
+    let ids = [];
+    try { const idx = await window.storage.get(HISTORY_KEY, true); if(idx) ids = JSON.parse(idx.value); } catch {}
+    ids = ids.filter(x => x !== id);
+    await window.storage.set(HISTORY_KEY, JSON.stringify(ids), true);
+  } catch {}
+}
+
+// ─── Build userContent for any file type ─────────────────────────────────────
+async function buildUserContent(file, prompt) {
+  const ft = file.type || "";
+  const isPdf = ft==="application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isImg = ft.startsWith("image/");
+  const isVid = ft.startsWith("video/");
+  if (isImg) {
+    const b64 = await toBase64(file);
+    return [{ type:"image", source:{type:"base64",media_type:ft,data:b64} }, { type:"text", text:prompt }];
+  }
+  if (isPdf) {
+    const b64 = await toBase64(file);
+    return [{ type:"document", source:{type:"base64",media_type:"application/pdf",data:b64} }, { type:"text", text:prompt }];
+  }
+  if (isVid) return `Archivo de video: "${file.name}" (${fmt(file.size)}). ${prompt}`;
+  const text = await new Promise(r => {
+    const reader = new FileReader();
+    reader.onload = () => r(reader.result);
+    reader.onerror = () => r(`Archivo: ${file.name}`);
+    reader.readAsText(file);
+  });
+  return `Artefacto:\n${text.slice(0,3500)}\n\n${prompt}`;
+}
+
+// ─── ISTQB Persona ────────────────────────────────────────────────────────────
+const PERSONA = `Eres un QA Engineer Senior con certificacion ISTQB Foundation Level (CTFL) y 8 anos de experiencia en testing manual y automatizado. Dominas los 7 principios del testing ISTQB, niveles de prueba (unitario, integracion, sistema, aceptacion), tipos de prueba (funcional, no funcional, regresion, humo, exploratorio) y tecnicas de diseno de caja negra (particion de equivalencia, valores limite, tablas de decision, transicion de estados). Identificas riesgos del producto y redactas casos de prueba con terminologia ISTQB profesional. Piensas como QA: buscas defectos, no confirmas que el software funciona.`;
+
+// ─── Analysis phase ───────────────────────────────────────────────────────────
+async function analyzeContent(file, mode) {
+  if (mode === "panaya") {
+    const system = `${PERSONA}
+Eres experto en Panaya Automation. Lee el documento completo. Responde SOLO con JSON valido sin markdown.
+Schema (sin pasos, solo metadata):
+{"title":"titulo del script","priority":"ALTA|MEDIA|BAJA","module":"modulo principal","summary":"resumen del documento en 2 oraciones","scope":"que cubre la automatizacion","objective":"que automatiza en 1 oracion","preconditions":"estado previo en sistema y Panaya","expectedResult":"resultado esperado","note":"consideracion critica Panaya","totalSteps":6}
+El campo totalSteps: entre 4 y 8 segun complejidad. Solo el JSON.`;
+    const userContent = await buildUserContent(file, "Lee el documento completo y devuelve el JSON de metadata del script Panaya.");
+    const raw = await callClaude(system, userContent);
+    const parsed = safeParse(raw);
+    if (!parsed) throw new Error("No se pudo interpretar el documento. Intenta de nuevo.");
+    return parsed;
+  }
+  const system = `${PERSONA}
+Analiza el artefacto y responde SOLO con JSON valido sin markdown.
+Schema: {"summary":"analisis QA en 2 oraciones","type":"tipo de artefacto","testLevel":"Unitario|Integracion|Sistema|Aceptacion","riskAreas":["r1","r2","r3"],"testTypes":["t1","t2"],"scope":"alcance","topics":["a","b","c"],"testTitles":[{"title":"titulo caso","priority":"ALTA|MEDIA|BAJA","technique":"Particion Equivalencia|Valores Limite|Tabla Decision|Transicion Estados|Exploratorio|Caso de Uso"}]}
+Determina cuantos casos son necesarios segun complejidad del documento (minimo 2, maximo 6). Solo el JSON.`;
+  const userContent = await buildUserContent(file, "Lee el contenido completo y analiza desde perspectiva QA ISTQB. Devuelve el JSON.");
+  const raw = await callClaude(system, userContent);
+  const parsed = safeParse(raw);
+  if (!parsed) throw new Error("No se pudo interpretar el analisis. Intenta de nuevo.");
+  return parsed;
+}
+
+async function generatePanayaStepGroup(meta, fromStep, toStep) {
+  const count = toStep - fromStep + 1;
+  const system = `${PERSONA}
+Eres experto en Panaya Automation. Genera exactamente ${count} pasos. Responde SOLO con JSON valido sin markdown.
+Schema: {"steps":[{"num":${fromStep},"action":"accion concreta en Panaya Automation","detail":"descripcion tecnica de como ejecutarlo, maximo 2 lineas"}]}
+Exactamente ${count} objetos en steps, numerados del ${fromStep} al ${toStep}. Solo el JSON.`;
+  const ctx = `Script: "${meta.title}". Modulo: ${meta.module}. Objetivo: ${meta.objective}. Scope: ${meta.scope}. Total pasos: ${meta.totalSteps}.`;
+  const raw = await callClaude(system, `${ctx}\nGenera los pasos ${fromStep} a ${toStep}.`);
+  const parsed = safeParse(raw);
+  return parsed?.steps || [];
+}
+
+async function generateTestCase(title, priority, technique, context) {
+  const system = `${PERSONA}
+Redacta un caso de prueba formal ISTQB. Responde SOLO con JSON valido sin markdown.
+Schema: {"title":"${title}","priority":"${priority}","testType":"Funcional|No Funcional|Regresion|Humo|Exploratorio","technique":"${technique}","testLevel":"nivel","objective":"objetivo en 1 oracion","preconditions":"estado previo","entryConditions":"criterios entrada ISTQB","steps":["p1","p2","p3","p4"],"testData":"datos a usar","expected":"resultado esperado","exitConditions":"criterios salida ISTQB","automation":"codigo Python Selenium conciso con \\\\n entre lineas"}
+Max 4 pasos. Automation: 3 lineas. Solo el JSON.`;
+  const raw = await callClaude(system, `Contexto: ${context.slice(0,300)}\nGenera caso de prueba para: "${title}" usando tecnica ${technique}.`);
+  return safeParse(raw) || { title, priority, technique, testType:"Funcional", steps:[], expected:"No disponible", automation:"" };
+}
+
+// ─── Panaya Card ──────────────────────────────────────────────────────────────
+function PanayaCard({ c, single }) {
+  const [open, setOpen] = useState(!!single);
+  return (
+    <div className={`pcard${open?" expanded":""}`} onClick={()=>setOpen(!open)}>
+      <div className="pcard-header">
+        <div className="pcard-num">PA</div>
+        <div className="pcard-title">{c.title}</div>
+        <span className={`case-priority ${priClass(c.priority)}`}>{c.priority||"MEDIA"}</span>
+        <span className="pcard-chevron">▶</span>
+      </div>
+      <div className="pcard-body">
+        <div className="p-meta-row">
+          {c.module && <span className="p-meta"><strong>Modulo:</strong>{c.module}</span>}
+          {c.scope && <span className="p-meta"><strong>Scope:</strong>{c.scope}</span>}
+        </div>
+        {c.objective && <div className="pcs"><div className="pcs-title">Objetivo del Script</div><div className="pcs-content">{c.objective}</div></div>}
+        {c.preconditions && <div className="pcs"><div className="pcs-title">Precondiciones</div><div className="precond-block">{c.preconditions}</div></div>}
+        {(c.steps||[]).length > 0 && (
+          <div className="pcs">
+            <div className="pcs-title">Pasos en Panaya Automation</div>
+            <div className="panaya-steps">
+              {(c.steps||[]).map((s,i) => (
+                <div className="panaya-step" key={i}>
+                  <div className="panaya-step-num">{s.num||i+1}</div>
+                  <div>
+                    <div className="panaya-step-action">{s.action}</div>
+                    <div className="panaya-step-detail">{s.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {c.expectedResult && <div className="pcs"><div className="pcs-title">Resultado Esperado</div><div className="expected-amber">✓ {c.expectedResult}</div></div>}
+        {c.note && <div className="panaya-note">⚠ {c.note}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── ISTQB Case Card ──────────────────────────────────────────────────────────
+function CaseCard({ c, idx, loading }) {
+  const [open, setOpen] = useState(false);
+  if (loading) return (
+    <div className="case-card">
+      <div className="case-loading"><div className="spin-sm"/>Redactando TC{String(idx+1).padStart(2,"0")} con criterios ISTQB...</div>
+    </div>
+  );
+  return (
+    <div className={`case-card${open?" expanded":""}`} onClick={()=>setOpen(!open)}>
+      <div className="case-header">
+        <div className="case-num">TC{String(idx+1).padStart(2,"0")}</div>
+        <div className="case-title">{c.title}</div>
+        <div className="case-badges">
+          {c.technique && <span className="case-type-badge">{c.technique}</span>}
+          <span className={`case-priority ${priClass(c.priority)}`}>{c.priority||"MEDIA"}</span>
+        </div>
+        <span className="case-chevron">▶</span>
+      </div>
+      <div className="case-body">
+        <div className="case-meta-row">
+          {c.testType && <span className="cmr-item"><strong>Tipo:</strong>{c.testType}</span>}
+          {c.testLevel && <span className="cmr-item"><strong>Nivel:</strong>{c.testLevel}</span>}
+          {c.technique && <span className="cmr-item"><strong>Tecnica:</strong>{c.technique}</span>}
+        </div>
+        {c.objective && <div className="cs"><div className="cs-title">Objetivo</div><div className="cs-content">{c.objective}</div></div>}
+        {c.preconditions && <div className="cs"><div className="cs-title">Precondiciones</div><div className="cs-content">{c.preconditions}</div></div>}
+        {c.entryConditions && <div className="cs"><div className="cs-title">Criterios de Entrada</div><div className="cs-content">{c.entryConditions}</div></div>}
+        {(c.steps||[]).length>0 && (
+          <div className="cs">
+            <div className="cs-title">Pasos de Ejecucion</div>
+            <ul className="steps-list">{c.steps.map((s,i)=><li key={i}><span className="step-num">{i+1}</span>{s}</li>)}</ul>
+          </div>
+        )}
+        {c.testData && <div className="cs"><div className="cs-title">Datos de Prueba</div><div className="cs-content">{c.testData}</div></div>}
+        {c.expected && <div className="cs"><div className="cs-title">Resultado Esperado</div><div className="expected-block">✓ {c.expected}</div></div>}
+        {c.exitConditions && <div className="cs"><div className="cs-title">Criterios de Salida</div><div className="exit-block">◎ {c.exitConditions}</div></div>}
+        {c.automation && <div className="cs"><div className="cs-title">Script Selenium</div><div className="automation-block">{(c.automation||"").replace(/\\n/g,"\n")}</div></div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── History Panel ────────────────────────────────────────────────────────────
+function HistoryPanel({ onOpen }) {
+  const [records, setRecords] = useState(null);
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [deleting, setDeleting] = useState(null);
+
+  useEffect(() => {
+    loadHistory().then(setRecords);
+    const interval = setInterval(() => loadHistory().then(setRecords), 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleDelete = async (e, id) => {
+    e.stopPropagation();
+    setDeleting(id);
+    await deleteRecord(id);
+    setRecords(prev => prev.filter(r => r.id !== id));
+    setDeleting(null);
+  };
+
+  if (records === null) return <div className="hist-loading">Cargando historial del equipo...</div>;
+
+  const filtered = records.filter(r => {
+    if (filter !== "all" && r.mode !== filter) return false;
+    if (search && !r.fileName?.toLowerCase().includes(search.toLowerCase()) &&
+        !r.title?.toLowerCase().includes(search.toLowerCase()) &&
+        !r.summary?.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  if (records.length === 0) return (
+    <div className="hist-empty">
+      <span className="hist-empty-icon">📂</span>
+      <div className="hist-empty-text">El historial del equipo esta vacio.<br/>Los analisis generados apareceran aqui automaticamente,<br/>visibles para todos los miembros del equipo.</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="shared-notice">
+        👥 Este historial es compartido — todos los usuarios ven los mismos registros en tiempo real.
+      </div>
+      <div className="hist-filters">
+        {[["all","Todos"],["panaya","Panaya"],["tc","ISTQB"]].map(([v,l])=>(
+          <button key={v} className={`hist-filter-btn${filter===v?" active"+(v==="panaya"?" amber":""):""}`} onClick={()=>setFilter(v)}>{l}</button>
+        ))}
+        <input className="hist-search" placeholder="Buscar por archivo o titulo..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        <span className="hist-count">{filtered.length} registros</span>
+      </div>
+      <div className="hist-grid">
+        {filtered.map(r => (
+          <div key={r.id} className={`hist-card${r.mode==="panaya"?" panaya-hist":""}`} onClick={()=>onOpen(r)}>
+            <div className="hist-card-top">
+              <span className={`hist-mode-badge ${r.mode==="panaya"?"panaya":"tc"}`}>
+                {r.mode==="panaya"?"PANAYA":"ISTQB TC"}
+              </span>
+              <div className="hist-card-title">{r.title || r.fileName}</div>
+            </div>
+            <div className="hist-card-meta">
+              <span className="hist-meta-item">📄 <span>{r.fileName}</span></span>
+              <span className="hist-meta-item">🕐 <span>{fmtDate(r.createdAt)}</span></span>
+              {r.itemCount && <span className="hist-meta-item">📋 <span>{r.itemCount} {r.mode==="panaya"?"script":"casos"}</span></span>}
+              {r.author && <span className="hist-meta-item">👤 <span>{r.author}</span></span>}
+            </div>
+            {r.summary && <div className="hist-card-summary">{r.summary}</div>}
+            {r.topics?.length > 0 && (
+              <div className="hist-tags">{r.topics.slice(0,4).map((t,i)=><span key={i} className="hist-tag">{t}</span>)}</div>
+            )}
+            <div className="hist-actions" onClick={e=>e.stopPropagation()}>
+              <button className="hist-action-btn" onClick={()=>onOpen(r)}>👁 Ver resultado</button>
+              <button className="hist-action-btn danger" onClick={e=>handleDelete(e,r.id)} disabled={deleting===r.id}>
+                {deleting===r.id?"...":"🗑 Eliminar"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Saved Result Viewer ──────────────────────────────────────────────────────
+function SavedResultView({ record, onBack }) {
+  const { mode, analysis, items } = record;
+  return (
+    <div className="results" style={{marginTop:0}}>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+        <button className="hist-action-btn" onClick={onBack}>← Volver al historial</button>
+        <span style={{color:"#475569",fontSize:".8rem",fontFamily:"'Space Mono',monospace"}}>{fmtDate(record.createdAt)} · {record.fileName}</span>
+      </div>
+
+      {mode==="tc" && analysis && (
+        <>
+          <div className="section-label">Analisis QA del Artefacto</div>
+          <div className="analysis-card">
+            <h2>📋 {analysis.type}</h2>
+            <div className="analysis-text">{analysis.summary}</div>
+            <div className="meta-grid">
+              {analysis.testLevel && <div className="meta-item"><div className="meta-label">Nivel ISTQB</div><div className="meta-value">{analysis.testLevel}</div></div>}
+              {analysis.scope && <div className="meta-item"><div className="meta-label">Alcance</div><div className="meta-value">{analysis.scope}</div></div>}
+            </div>
+          </div>
+          {analysis.riskAreas?.length>0 && (
+            <div className="analysis-card"><h2>⚠ Areas de Riesgo</h2>
+              <div className="tags">{analysis.riskAreas.map((r,i)=><span key={i} className="tag tag-risk">{r}</span>)}</div>
+            </div>
+          )}
+          <div className="section-label" style={{marginTop:24}}>Suite de Pruebas · {items?.length} casos</div>
+          <div className="cases-grid">{(items||[]).map((c,i)=><CaseCard key={i} c={c} idx={i} loading={false}/>)}</div>
+        </>
+      )}
+
+      {mode==="panaya" && items?.[0] && (
+        <>
+          <div className="section-label amber">Script Panaya Automation</div>
+          <PanayaCard c={items[0]} single={true}/>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab]                 = useState("new");       // "new" | "history"
+  const [file, setFile]               = useState(null);
+  const [drag, setDrag]               = useState(false);
+  const [mode, setMode]               = useState(null);
+  const [phase, setPhase]             = useState("idle");
+  const [loadStep, setLoadStep]       = useState("");
+  const [progress, setProgress]       = useState(0);
+  const [analysis, setAnalysis]       = useState(null);
+  const [items, setItems]             = useState([]);
+  const [pendingCount, setPending]    = useState(0);
+  const [error, setError]             = useState(null);
+  const [viewingRecord, setViewing]   = useState(null);
+  const [author, setAuthor]           = useState(() => localStorage.getItem("qa-author") || "");
+  const inputRef = useRef();
+
+  const handleFile = useCallback((f) => {
+    if (!f) return;
+    setFile(f); setAnalysis(null); setItems([]); setError(null); setPhase("idle");
+  }, []);
+
+  const reset = () => {
+    setFile(null); setMode(null); setAnalysis(null); setItems([]);
+    setError(null); setPhase("idle"); setProgress(0);
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault(); setDrag(false);
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  };
+
+  const run = async () => {
+    if (!file || !mode) return;
+    setError(null); setItems([]); setAnalysis(null); setProgress(10);
+    setPhase("analyzing");
+    setLoadStep(mode==="panaya" ? "Leyendo y analizando documento para Panaya..." : "Analizando artefacto con criterio ISTQB...");
+
+    let summary;
+    try { summary = await analyzeContent(file, mode); }
+    catch (e) { setError(e.message); setPhase("idle"); return; }
+
+    setAnalysis(summary);
+    setProgress(40);
+
+    if (mode === "panaya") {
+      setPhase("generating");
+      const total = Math.min(Math.max(summary.totalSteps || 6, 4), 8);
+      let allSteps = [];
+      for (let from = 1; from <= total; from += 3) {
+        const to = Math.min(from + 2, total);
+        setLoadStep(`Generando pasos ${from}–${to} de ${total} en Panaya...`);
+        setProgress(40 + Math.round((from / total) * 55));
+        const group = await generatePanayaStepGroup(summary, from, to);
+        allSteps = [...allSteps, ...group];
+      }
+      const fullScript = { ...summary, steps: allSteps };
+      setItems([fullScript]);
+      setPending(0);
+
+      // Save to shared history
+      await saveRecord({
+        mode, fileName: file.name, title: fullScript.title,
+        summary: fullScript.summary, topics: [],
+        itemCount: 1, createdAt: Date.now(),
+        author: author || "Anonimo",
+        analysis: summary, items: [fullScript]
+      });
+
+      setPhase("done"); setLoadStep("");
+      return;
+    }
+
+    // TC mode
+    const list = summary.testTitles || [];
+    setPending(list.length);
+    setPhase("generating");
+    setProgress(25);
+    const ctx = `${summary.type}. ${summary.summary}. Nivel: ${summary.testLevel}. Riesgos: ${(summary.riskAreas||[]).join(", ")}.`;
+    const finalItems = [];
+
+    for (let i=0; i<list.length; i++) {
+      const item = list[i];
+      setLoadStep(`Redactando TC${String(i+1).padStart(2,"0")} de ${list.length} — ${item.technique||"Funcional"}...`);
+      const result = await generateTestCase(item.title, item.priority, item.technique||"Caso de Uso", ctx);
+      finalItems.push(result);
+      setItems(prev=>[...prev, result]);
+      setPending(prev=>prev-1);
+      setProgress(25 + Math.round(((i+1)/list.length)*75));
+    }
+
+    // Save to shared history
+    await saveRecord({
+      mode, fileName: file.name,
+      title: summary.type || file.name,
+      summary: summary.summary,
+      topics: summary.topics || [],
+      itemCount: finalItems.length,
+      createdAt: Date.now(),
+      author: author || "Anonimo",
+      analysis: summary, items: finalItems
+    });
+
+    setPhase("done"); setLoadStep("");
+  };
+
+  const exportTXT = () => {
+    let t = mode==="panaya" ? "SCRIPTS PANAYA AUTOMATION\n"+"=".repeat(50)+"\n\n" : "SUITE DE PRUEBAS ISTQB\n"+"=".repeat(50)+"\n\n";
+    t += `Tipo: ${analysis?.type||analysis?.title} | Resumen: ${analysis?.summary}\n\n`;
+    items.forEach((c,i) => {
+      if (mode==="panaya") {
+        t += `\nPA01 — ${c.title} [${c.priority}]\nModulo: ${c.module}\nObjetivo: ${c.objective}\nPrecondiciones: ${c.preconditions}\n`;
+        (c.steps||[]).forEach(s=>{ t+=`  ${s.num}. ${s.action}: ${s.detail}\n`; });
+        t += `Resultado: ${c.expectedResult}\nNota: ${c.note}\n`;
+      } else {
+        t += `\nTC${String(i+1).padStart(2,"0")} — ${c.title} [${c.priority}]\nTecnica: ${c.technique}\nObjetivo: ${c.objective}\nPrecondiciones: ${c.preconditions}\n`;
+        (c.steps||[]).forEach((s,j)=>{ t+=`  ${j+1}. ${s}\n`; });
+        t += `Esperado: ${c.expected}\n`;
+      }
+    });
+    const blob=new Blob([t],{type:"text/plain"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download=mode==="panaya"?"panaya-script.txt":"test-suite-istqb.txt"; a.click();
+  };
+
+  const exportJSON = () => {
+    const blob=new Blob([JSON.stringify({mode,analysis,items},null,2)],{type:"application/json"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download=mode==="panaya"?"panaya-script.json":"test-suite-istqb.json"; a.click();
+  };
+
+  const isLoading = phase==="analyzing"||phase==="generating";
+  const showResults = analysis && (items.length>0||pendingCount>0);
+  const canRun = file && mode && !isLoading && phase!=="done";
+
+  return (
+    <>
+      <style>{styles}</style>
+      <div className="app">
+        <div className="grid-bg"/>
+        <div className="orb orb1"/><div className="orb orb2"/>
+        <div className="container">
+
+          {/* Header */}
+          <div className="header">
+            <div className="badge"><span className="badge-dot"/>ISTQB Certified QA Analyzer</div>
+            <h1>Testing <span>Profesional</span><br/>con estandar ISTQB</h1>
+            <p className="subtitle">Analisis de artefactos por un QA Senior certificado ISTQB.<br/>Historial compartido en tiempo real para todo el equipo.</p>
+          </div>
+
+          {/* Nav */}
+          {!viewingRecord && (
+            <div className="nav-tabs">
+              <button className={`nav-tab${tab==="new"?" active":""}`} onClick={()=>setTab("new")}>⚡ Nuevo Analisis</button>
+              <button className={`nav-tab${tab==="history"?" active":""}`} onClick={()=>setTab("history")}>📂 Historial del Equipo</button>
+            </div>
+          )}
+
+          {/* ── HISTORY TAB ── */}
+          {tab==="history" && !viewingRecord && (
+            <HistoryPanel onOpen={r=>{ setViewing(r); }}/>
+          )}
+          {viewingRecord && (
+            <SavedResultView record={viewingRecord} onBack={()=>setViewing(null)}/>
+          )}
+
+          {/* ── NEW ANALYSIS TAB ── */}
+          {tab==="new" && !viewingRecord && (
+            <>
+              {/* Author field */}
+              <div style={{marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:".8rem",color:"#475569",fontFamily:"'Space Mono',monospace",flexShrink:0}}>👤 Tu nombre:</span>
+                <input
+                  style={{flex:1,padding:"7px 13px",borderRadius:"8px",border:"1px solid rgba(255,255,255,.08)",background:"rgba(255,255,255,.03)",color:"#e2e8f0",fontFamily:"'Space Mono',monospace",fontSize:".8rem",outline:"none"}}
+                  placeholder="Nombre o alias (opcional)"
+                  value={author}
+                  onChange={e=>{ setAuthor(e.target.value); localStorage.setItem("qa-author",e.target.value); }}
+                />
+              </div>
+
+              {/* Mode selector */}
+              {phase !== "done" && (
+                <div className="mode-selector">
+                  <div className={`mode-card mode-panaya${mode==="panaya"?" selected":""}`} onClick={()=>setMode("panaya")}>
+                    <div className="mode-check">{mode==="panaya"?"✓":"○"}</div>
+                    <span className="mode-icon">🤖</span>
+                    <div className="mode-title">Panaya Automation</div>
+                    <div className="mode-desc">Genera UN script completo que cubre todo el documento, con todos los pasos necesarios para implementar en Panaya Automation.</div>
+                    <span className="mode-tag">1 SCRIPT COMPLETO · TODO EL DOCUMENTO</span>
+                  </div>
+                  <div className={`mode-card mode-tc${mode==="tc"?" selected":""}`} onClick={()=>setMode("tc")}>
+                    <div className="mode-check">{mode==="tc"?"✓":"○"}</div>
+                    <span className="mode-icon">📋</span>
+                    <div className="mode-title">Casos de Prueba ISTQB</div>
+                    <div className="mode-desc">Genera casos de prueba formales ISTQB con tecnicas de diseno, criterios de entrada/salida, datos de prueba y script Selenium.</div>
+                    <span className="mode-tag">TEST CASES · CANTIDAD SEGUN COMPLEJIDAD</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Upload */}
+              {phase !== "done" && (
+                <div className={`upload-zone${drag?" drag-over":""}`}
+                  onDragOver={(e)=>{e.preventDefault();setDrag(true);}}
+                  onDragLeave={()=>setDrag(false)} onDrop={onDrop}
+                  onClick={()=>!file&&inputRef.current?.click()}>
+                  <input ref={inputRef} type="file"
+                    accept=".docx,.doc,.pdf,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.avi"
+                    onChange={(e)=>handleFile(e.target.files[0])}/>
+                  {!file ? (
+                    <>
+                      <span className="upload-icon">⬆</span>
+                      <div className="upload-title">Sube tu artefacto de software</div>
+                      <div className="upload-sub">Especificaciones, mockups, user stories, pantallas o videos</div>
+                      <div className="type-pills">{[".docx",".pdf",".txt",".png/.jpg",".mp4"].map(t=><span key={t} className="pill">{t}</span>)}</div>
+                    </>
+                  ) : (
+                    <div className="file-preview" onClick={(e)=>e.stopPropagation()}>
+                      <span className="file-icon-lg">{fileIcon(file.type)}</span>
+                      <div className="file-info">
+                        <div className="file-name">{file.name}</div>
+                        <div className="file-meta">{fmt(file.size)} · {file.type||"desconocido"}</div>
+                      </div>
+                      <button className="btn-remove" onClick={reset}>✕ Quitar</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {canRun && (
+                <button className={`analyze-btn ${mode==="panaya"?"btn-panaya":"btn-tc"}`} onClick={run}>
+                  {mode==="panaya" ? "🤖 Generar Script Panaya Automation" : "⚡ Generar Suite de Pruebas ISTQB"}
+                </button>
+              )}
+
+              {isLoading && (
+                <div className="loading-state">
+                  <div className={`spinner${mode==="panaya"?" spin-amber":""}`}/>
+                  <div className={`loading-step${mode==="panaya"?" amber":""}`}>{loadStep}</div>
+                  <div className="loading-text">El QA Senior esta trabajando...</div>
+                  <div className="progress-wrap">
+                    <div className={`progress-bar${mode==="panaya"?" amber":""}`} style={{width:`${progress}%`}}/>
+                  </div>
+                </div>
+              )}
+
+              {error && <div className="error-box">⚠ {error}</div>}
+
+              {showResults && (
+                <div className="results">
+                  <div className="divider"/>
+                  <div className={`section-label${mode==="panaya"?" amber":""}`}>Analisis QA del Artefacto</div>
+
+                  {mode==="tc" && (
+                    <>
+                      <div className="analysis-card">
+                        <h2>📋 {analysis.type}</h2>
+                        <div className="analysis-text">{analysis.summary}</div>
+                        <div className="meta-grid">
+                          {analysis.testLevel && <div className="meta-item"><div className="meta-label">Nivel ISTQB</div><div className="meta-value">{analysis.testLevel}</div></div>}
+                          {analysis.scope && <div className="meta-item"><div className="meta-label">Alcance</div><div className="meta-value">{analysis.scope}</div></div>}
+                        </div>
+                      </div>
+                      {analysis.riskAreas?.length>0 && (
+                        <div className="analysis-card"><h2>⚠ Areas de Riesgo</h2>
+                          <div className="tags">{analysis.riskAreas.map((r,i)=><span key={i} className="tag tag-risk">{r}</span>)}</div>
+                        </div>
+                      )}
+                      {(analysis.testTypes?.length>0||analysis.topics?.length>0) && (
+                        <div className="analysis-card"><h2>🧪 Tipos de Prueba</h2>
+                          <div className="tags">
+                            {(analysis.testTypes||[]).map((t,i)=><span key={i} className="tag tag-type">{t}</span>)}
+                            {(analysis.topics||[]).map((t,i)=><span key={"tp"+i} className="tag">{t}</span>)}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <div className={`section-label${mode==="panaya"?" amber":""}`} style={{marginTop:28}}>
+                    {mode==="panaya" ? "Script Panaya · Cobertura total del documento" : `Suite ISTQB · ${items.length+pendingCount} casos`}
+                  </div>
+                  <div className="cases-grid">
+                    {items.map((c,i) => mode==="panaya"
+                      ? <PanayaCard key={i} c={c} single={true}/>
+                      : <CaseCard key={i} c={c} idx={i} loading={false}/>
+                    )}
+                    {Array.from({length:pendingCount}).map((_,i) =>
+                      <CaseCard key={"p"+i} c={{}} idx={items.length+i} loading={true}/>
+                    )}
+                  </div>
+
+                  {phase==="done" && (
+                    <div className="export-bar">
+                      <button className={`export-btn${mode==="panaya"?" amber-btn":""}`} onClick={exportJSON}>⬇ JSON</button>
+                      <button className={`export-btn${mode==="panaya"?" amber-btn":""}`} onClick={exportTXT}>📄 TXT</button>
+                      <button className="export-btn" onClick={()=>setTab("history")}>📂 Ver Historial</button>
+                      <button className="export-btn" onClick={reset}>🔄 Nuevo</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+        </div>
+      </div>
+    </>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+  </script>
+</body>
+</html>
